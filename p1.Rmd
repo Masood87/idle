@@ -1,0 +1,723 @@
+
+```{r warning=FALSE, include=FALSE, message=FALSE}
+require(tidyverse)
+require(data.table)
+require(lubridate)
+require(maptools)
+require(knitr)
+df <- read_csv("~/Documents/My Consultancies/IDLG District Governor's Report/DG data (March 19) v5.csv")
+pop <- read_csv("~/Documents/My Consultancies/IDLG District Governor's Report/Afghan_opium_survey_2017_cult_CLEAN.csv")
+names(pop) <- c("province", "dist", "year", "cultivation")
+pop$year <- pop$year-621
+```
+```{r warning=FALSE, include=FALSE}
+df$education <- factor(df$education, levels = c("Master's degree", "Bachelor degree", "14th grade", "School certificate", "School incomplete", "Private education"))
+df$majEthnic <- ifelse(df$ethnic == "Pashtun", "Pashtun", 
+                       ifelse(df$ethnic == "Tajik", "Tajik", ifelse(df$ethnic == "Hazara", "Hazara", ifelse(df$ethnic == "Uzbek", "Uzbek", ifelse(!is.na(df$ethnic), "Others", NA)))))
+df$majEthnic <- factor(df$majEthnic, levels = c("Pashtun", "Tajik", "Hazara", "Uzbek", "Others"))
+df$native <- as.character(df$native)
+df$native <- ifelse(df$native == "TRUE", "Native", ifelse(df$native == "FALSE", "Non-native", NA))
+df$competitiveHiring <- ifelse(df$dghiring=="Competitive", "Competitive", ifelse(is.na(df$dghiring), NA, "Uncompetitive")) %>% factor(ordered = T)
+df <- mutate(df, startyear = year(df$startdate), startAge = startyear - birthyear, 
+             ageGrps = ifelse(startAge<=30, 1, ifelse(startAge<=40, 2, ifelse(startAge<=50, 3, ifelse(startAge<=60, 4, 5)))))
+df$ageGrps <- factor(df$ageGrps, labels = c("Up to 30", "31-40", "41-50", "51-60", "More than 60"))
+df$secure <- factor(df$secure, levels = c("Not Active","Insecure","Somewhat Insecure","Somewhat Secure","Secure"), ordered = T)
+df$native <- df$pob == df$province
+df <- mutate(df, border=factor(border, labels=c("Without Border", "With Border")), 
+             ports=factor(ports, labels=c("Without Port", "With Port")), 
+             mines=factor(mines, labels=c("Without Mine", "With Mine")), 
+             grade=factor(grade, labels=c("Grade 1", "Grade 2", "Grade 3")), 
+             suburb=factor(suburb, labels=c("Not Adjacent to a Provincial Center", "Adjacent to a Provincial Center")), 
+             highway=factor(highway, labels=c("Without Highway", "With Highway")), 
+             native=factor(native, labels=c("Non-Native", "Native")))
+
+df2 <- data.table(select(df, -interval))
+df2 <- df2[, list(prov,district,firstname,fathername,pob,birthyear,ageGrps,majEthnic,competitiveHiring,education,native,polpartyaffiliation,pastpolpartyaffiliation,province,dist,status,secure,security,border,ports,mines,grade,suburb,highway, date = seq(startdate, enddate, by = "day")), by = 1:nrow(df)]
+df2$age <- as.numeric((as.Date(df2$date) - as.Date(paste0(df2$birthyear, "-07-01")))/365)
+df2$ageGrps2 <- if_else(df2$age<30.5, 1, if_else(df2$age<40.5, 2, if_else(df2$age<50.5, 3, if_else(df2$age<60.5, 4, 5))))
+df2$ageGrps2 <- factor(df2$ageGrps2, labels = c("Up to 30", "31-40", "41-50", "51-60", "More than 60"))
+df2$year <- year(df2$date)
+df2 <- full_join(df2, pop, c("province", "dist", "year"))
+
+nugIncept <- as.Date("1393-07-07")
+incept <- format.Date(nugIncept, "%d/%m/%Y") %>% as.character()
+nugHired <- filter(df, startdate > nugIncept & !is.na(firstname))
+shp <- readShapePoly("~/Desktop/ShinyApps/Province mapmaker/AFG_adm1.shp")
+```
+
+# PART 1
+
+## DISTRICTS
+
+### District Grade
+```{r message=FALSE, warning=FALSE, include=FALSE}
+disGrade <- unique(df[, c("province", "district", "grade")]) %>% .[[3]] %>% table %>% data.frame
+g1g1 <- unique(df[df$grade=="Grade 1", c("province", "district", "provGrade")]) %>% group_by(provGrade) %>% tally
+```
+
+Afghanistan has 387 districts in total, of which 364 are permanent districts and 23 are temporary districts that are created based on the need. Furthermore, the districts are classified into three grades based on their importance. Grade 1 districts are considered most important, followed by grade 2 and then grade 3. There are `r disGrade[1,2]` grade 1 districts, `r disGrade[2,2]` grade 2 districts, and `r disGrade[3,2]` grade 3 districts. A similar classification exists for provinces--the following table provides the list of provinces and their associated grade. Districts with higher grade are more likely to exist in the higher grade provinces; for example half (`r g1g1[1,2]`) of grade 1 districts happen to be in grade 1 provinces.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+options(knitr.kable.NA = "")
+bind_cols(unique(df[, c("province", "provGrade")]) %>% arrange(provGrade) %>% {.[1:17,]}, data.frame(x = rep(NA, 17), y = rep(NA, 17)),
+          unique(df[, c("province", "provGrade")]) %>% arrange(provGrade) %>% {.[18:34,]}) %>% 
+  kable(col.names = c("Provinces", "Grade", "", "", "Provinces", "Grade"), caption = "List of provinces and their grade")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+
+```
+
+\newpage
+Grade 1 districts are less likely to have border with neighboring countries.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and having a border with a neighboring country"}
+unique(df[, c("province", "district", "grade", "border")]) %>% select(3:4) %>% table() %>% data.frame() %>% ggplot(aes(grade, Freq, fill=border)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="") + theme(plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and having a land port"}
+unique(df[, c("province", "district", "grade", "ports")]) %>% select(3:4) %>% table() %>% data.frame() %>% ggplot(aes(grade, Freq, fill=ports)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="") + theme(plot.title = element_text(hjust = .5))
+```
+
+\newpage
+More than half of grade 1 districts have natural resources in the form of a mineral deposit or mine, and about four-fifth of grade 2 districts have a mineral deposit/mine in their territory. Only a fourth of grade 3 districts have mine in their territory. The relationship between higher grades and higher chance of having mines makes district grade and mines closely associated.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and having mineral deposits / mines"}
+unique(df[, c("province", "district", "grade", "mines")]) %>% select(3:4) %>% table() %>% data.frame() %>% ggplot(aes(grade, Freq, fill=mines)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="") + theme(plot.title = element_text(hjust = .5))
+```
+
+Close to half of grade 1 districts are located in vicinity of provincial centers. Districts of grade 2 and 3 are less likely to be located in the vicinity of provincial centers.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and being adjacent to a provincial center"}
+unique(df[, c("province", "district", "grade", "suburb")]) %>% select(3:4) %>% table() %>% data.frame() %>% ggplot(aes(grade, Freq, fill=suburb)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="") + theme(plot.title = element_text(hjust = .5))
+```
+
+\newpage
+A fraction of districts and cities in Afghanistan have access to highway. Having access to highway is considered valuable, and as such a greater proportion of grade 1 districts have access to highway than grade 2 and 3 districts.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and having access to highway"}
+unique(df[, c("province", "district", "grade", "highway")]) %>% select(3:4) %>% table() %>% data.frame() %>% ggplot(aes(grade, Freq, fill=highway)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="") + theme(plot.title = element_text(hjust = .5))
+```
+
+Grade 1 districts also have better security with majority of them considered secure (secure and somewhat secure). Insecurity is more widespread among grade 2 and 3 districts, with 14 of them have fallen to the hands of the anti-government forces.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and security status"}
+unique(df[, c("province", "district", "grade", "secure")]) %>% select(3:4) %>% table() %>% data.frame() %>% ggplot(aes(grade, Freq, fill=secure)) + geom_col(position = "dodge") + 
+  theme_bw() + labs(x="", fill="Security") + theme(plot.title = element_text(hjust = .5))
+```
+
+\newpage
+Furthermore, the relationship between district grade and characteristics of district governors are explored in the following graphs.
+
+There is a considerable difference in the age structure of district governors based on the district's grade. It appears that grade 2 districts that are considered medium-important have younger district governors than grade 1 and 3 distrists. However, grade 3 districts have the biggest change in terms of introducing younger district governors after the inception of NUG. Grade 1 districts have largely been consistent with respect to the district governors' age, and a tangible proportion (16.9%) of the district governors are older than 60 yeras of age.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and age of district governors"}
+df2[, c("province", "district", "date", "grade", "ageGrps2")] %>% group_by(date, grade, ageGrps2) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="District Grade and Age of District Governors") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+uniEd96 <- filter(df, !is.na(firstname), enddate == as.Date("1396-12-30")) %>% select(education) %>% table %>% prop.table %>% data.frame %>% {sum(.[1:2,2])*100} %>% round(1)
+uniEdNug <- filter(df2, !is.na(firstname), date==nugIncept) %>% select(education) %>% table %>% prop.table %>% data.frame %>% {sum(.[1:2, 2])*100} %>% round(1)
+```
+
+Since formation of NUG, the share of university educated district governors have been in the rise overall. Currently, `r uniEd96` percent of district governors have at least a bachelor degree, compared to `r uniEdNug` percent when the NUG was formed on `r nugIncept`.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and educational attainment of district governors"}
+df2[, c("province", "district", "date", "grade", "education")] %>% group_by(date, grade, education) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Education", title="District Grade and Education of District Governors") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+\newpage
+In terms of ethnicity, since the formation of NUG, the proportion of Pashtun and Tajik ethnic governors have declined in the grade 1 districts while the other ethnic minorities have gained greater representation at the grade 1 districts. However, other minorities have less district governors at grade 2 and 3 distircts where Pashtun and Tajik governors have made greater gains.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and ethnicity of district governors"}
+df2[, c("province", "district", "date", "grade", "majEthnic")] %>% group_by(date, grade, majEthnic) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Ethnicity", title="District Grade and Ethnicity of District Governors") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+In terms of type of appointments, while majority of district governors had been appointed through a competitive process, the share of governors appointed through noncompetitive processes have been on the rise since the formation of the NUG.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district grade and governors' type of appointment / recruitment"}
+df2[, c("province", "district", "date", "grade", "competitiveHiring")] %>% group_by(date, grade, competitiveHiring) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Appointment\nType", title="District Grade and Governor's Type of Appointment") + theme(axis.text.x=element_text(angle=90, vjust = .5), plot.title=element_text(hjust=.5))
+```
+
+\newpage
+
+### Highway Districts
+```{r message=FALSE, warning=FALSE, include=FALSE}
+hwDist <- unique(df[df$highway=="With Highway", c("province", "district")]) %>% nrow
+hwProv <- unique(df[df$highway=="With Highway", c("province")]) %>% nrow
+```
+
+Afghanistan’s XX kilometers highways cross `r hwDist` districts and 17 provincial capitals in `r hwProv` provinces. Afghanistan’s largest cities and regional centers such as Kabul city, Herat city, Mazar-e-Sharif, Jalalabad and Kandahar city are all located on the highway too, and districts along the highway path have greater connectivity to these large cities. Access to highways improve market access for districts to export agricultural products and therefore boost local economies. The following map shows the districts that highway crosses.
+
+```{r highwayMap, echo=FALSE, out.width="100%", fig.cap="Districts that access highway"}
+include_graphics("~/Documents/My Consultancies/IDLG District Governor's Report/Maps/highway.jpg")
+borderHW <- unique(df[df$border=="With Border" & df$highway=="With Highway", c("province", "district")]) %>% nrow()
+prtnoHW <- unique(df[df$ports=="With Port" & df$highway!="With Highway", c("province", "dist")])
+```
+
+Furthermore, the relationship between having highway and other indicators such as border, land port, mineral deposits, adjacentness to capital cities, grade, and security are explored using the following graphs.
+
+\newpage
+Only `r borderHW` districts have access to highway and border a neighboring country, of which 7 have land ports which are Afghanistan's primary gateway for trade. `r prtnoHW[1,2]` district of `r prtnoHW[1,1]` is the only district that is a land port but without access to highway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and having a border with a neighboring country"}
+unique(df[, c("province", "district", "highway", "border")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(highway, Freq, fill=border)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and having a land port"}
+unique(df[, c("province", "district", "highway", "ports")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(highway, Freq, fill=ports)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+Exactly half of districts that have access to highway also have extractive mineral resources / mines, which is higher than districts without access to highway. It might indicate that due to better access of highways, there has been more mine exploration, and perhaps as the highways extend there will be more mine discoveries in districts that do not access highway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and having mineral deposits / mines"}
+unique(df[, c("province", "district", "highway", "mines")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(highway, Freq, fill=mines)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+While provincial centers are also more likely to access highways than districts on average, the districts in vicinity of provincial centers are also more likely to have access to highway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and being adjacent to a provincial center"}
+unique(df[, c("province", "district", "highway", "suburb")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(highway, Freq, fill=suburb)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+Relationship between highway and security is mixed. On the one hand, many remote districts without access to highway are among the most secure areas in the country. On the other hand, all the districts thare have collapsed to the hands of anti-government groups are also remote districts without access to highway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and security status"}
+unique(df[, c("province", "district", "highway", "secure")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(highway, Freq, fill=secure)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="Security")
+```
+
+Expectedly, grade 1 districts are more likely to have access to highway than other districts.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and district grade"}
+unique(df[, c("province", "district", "highway", "grade")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(highway, Freq, fill=grade)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+Additionally, relationship between having highway and characteristics of district governors such as age, education, ethnicity, and appointment/recruitment type are explored in the following graphs.
+
+Despite some variance in age of district governors across time, which the report delve into in section 1.2.1, it is not a factor in districts with highway or without highwway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and age of district governors"}
+df2[, c("province", "district", "date", "highway", "ageGrps2")] %>% group_by(date, highway, ageGrps2) %>% tally %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age") + theme(axis.text.x = element_text(angle = 90, vjust = .5))
+```
+
+Similarly, in tersm of education, districts with or without highway have comparable governors.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and educational attainment of district governors"}
+df2[, c("province", "district", "date", "highway", "education")] %>% group_by(date, highway, education) %>% tally %>% 
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Education") + theme(axis.text.x = element_text(angle = 90, vjust = .5))
+```
+
+\newpage
+There is a tangible difference between districts that have or do not have access to highway in terms of ethnicity of governors. While Pashtun governors constitute nearly half of district governors overall, Pashtun district governors constitute a larger share in districts that have access to highway compared to other districts. Also, almost all Hazara district governors are in districts that do not have access to highway. This perhaps indicate the ethnic composition of those districts, as majority of Hazara population reside in more remote areas in the central region that do no have access to highway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and ethnicity of district governors"}
+df2[, c("province", "district", "date", "highway", "majEthnic")] %>% group_by(date, highway, majEthnic) %>% tally %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Ethnicity") + theme(axis.text.x = element_text(angle = 90, vjust = .5))
+```
+
+In terms of type of appointments, the district governors of districts with highway are more likely to be appointed through a competitive process than the rest. The trend also indicate a growing competitive appointments in the districts with access to highway, while a reverse trend is observed in the districts without access to highway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between access to highway and district governors' type of appointment / recruitment"}
+df2[, c("province", "district", "date", "highway", "competitiveHiring")] %>% group_by(date, highway, competitiveHiring) %>% tally %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Appointment\nType") + theme(axis.text.x=element_text(angle=90, vjust = .5))
+```
+
+\newpage
+
+### Security Status of Districts
+```{r message=FALSE, warning=FALSE, include=FALSE}
+secDist <- unique(df[df$secure %in% c("Secure", "Somewhat Secure"), c("province", "district")]) %>% nrow
+insecDist <- unique(df[df$secure %in% c("Insecure", "Somewhat Insecure"), c("province", "district")]) %>% nrow
+inactive <- unique(df[df$secure %in% c("Not Active"), c("province", "district")]) %>% nrow
+```
+
+Providing security has been a key challenge for the National Unity Government (NUG) that was formed on `r nugIncept`. Based on the latest data on security status of districts, `r secDist` districts are considered secure and somewhat secure, `r insecDist` districts are considered somewhat insecure or fully insecure, and `r inactive` districts have been marked as inactive as they have collapsed to the hands of anti-government groups. The details such as methods of this classification and reasons behind collapse of those `r inactive` districts are beyond the scope of this report. This report however provides descriptive analysis of security and its relation to other indicators of geography and characteristics of governors. The following table provides the number of districts that are classified in each of the security statuses, and Figure \ref{fig:secureMap} maps the security status of districts.
+
+```{r secTable, echo=FALSE, message=FALSE, warning=FALSE}
+unique(df[, c("province", "district", "secure")]) %>% .[[3]] %>% table() %>% kable(col.names = c("Security Status", "Number of Districts"), 
+                                                                                   caption = "Security status and number of districts that correspond")
+```
+
+```{r secureMap, echo=FALSE, out.width="100%", fig.cap="Security status of districts"}
+include_graphics("~/Documents/My Consultancies/IDLG District Governor's Report/Maps/secure.png")
+```
+
+\newpage
+In the following graphs, relationship between security and other characteristics of districts such as having border, land port, highway, extractive mineral resources/mines, adjacentness to provincial centers, and district grade are explored.
+
+Sharing border with a neighboring country does not appear to have a relationship with security situation in a district. Going further, regional differences exist with respect to sharing border which is discussed in Section 1.1.4.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between security and having a border with a neighboring country"}
+unique(df[, c("province", "district", "secure", "border")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(secure, Freq, fill=border)) + 
+  geom_col(position = "fill") + theme_bw() + theme(axis.text.x = element_text(size = 8), legend.position = "top") + labs(x="", fill="", y = "Ratio")
+```
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationhip between security and having a land port"}
+unique(df[, c("province", "district", "secure", "ports")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(secure, Freq, fill=ports)) + 
+  geom_col(position = "fill") + theme_bw() + theme(axis.text.x = element_text(size = 8), legend.position = "top") + labs(x="", fill="", y = "Ratio")
+```
+
+\newpage
+Security does not appear to have direct link with extractive mineral resources / mines, as most secure and most insecure districts are less likely to have mines, while somewhat secure and somewhat insecure districts are more likely to have them
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between security and having extractive mineral resources / mine"}
+unique(df[, c("province", "district", "secure", "mines")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(secure, Freq, fill=mines)) + 
+  geom_col(position = "fill") + theme_bw() + theme(axis.text.x = element_text(size = 8), legend.position = "top") + labs(x="", fill="", y = "Ratio")
+adjInactive <- unique(df[df$secure=="Not Active" & df$suburb=="Adjacent to a Provincial Center", c("province", "dist")])
+```
+
+Districts in vicinity of provincial centers, which is an indicator of nearness/remoteness, appears to limited relation with security. The most striking relationship is that districts that are in vicinity of provincial centers are less likely to be inactive (collapsed by anti-government groups). The exception is `r adjInactive[1,2]` in `r adjInactive[1,1]` and `r adjInactive[2,2]` in `r adjInactive[2,1]` which are both considered remote.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between security and adjacentness to provincial centers"}
+unique(df[, c("province", "district", "secure", "suburb")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(secure, Freq, fill=suburb)) + 
+  geom_col(position = "fill") + theme_bw() + theme(axis.text.x = element_text(size = 8), legend.position = "top") + labs(x="", fill="", y = "Ratio")
+```
+
+\newpage
+Relationship between security and highway access is also less robust. The most striking point is that all `r inactive` inactive districts do not have access to highway. Lack of access to highway indicates remoteness, which supports the idea that remote districts are more prone to attacks by anti-government groups. Although, many remote districts are also among the most secure areas in the country.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between security and access to highway"}
+unique(df[, c("province", "district", "secure", "highway")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(secure, Freq, fill=highway)) + 
+  geom_col(position = "fill") + theme_bw() + theme(axis.text.x = element_text(size = 8), legend.position = "top") + labs(x="", fill="", y = "Ratio")
+```
+
+Districts are assigned grades based on a number of criteria such as size, endowments, and location, which indicates overall importance. District grading and security appears to have strong relation. As appears in the following graph, grade 1 districts appear to be more secure than grade 2 and 3 districts. Furthermore, grade 3 districts that are likely remote and sparsely populated are also among the most secure districts too.
+
+```{r grdSec, echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between security and district grade"}
+unique(df[, c("province", "district", "secure", "grade")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(secure, Freq, fill=grade)) + 
+  geom_col(position = "fill") + theme_bw() + theme(axis.text.x = element_text(size = 8), legend.position = "top") + labs(x="", fill="", y = "Ratio")
+```
+
+\newpage
+Additional graphs explore the relationship between security and characteristics of district governors such as age, education, ethnicity, and appointment/recruitment type.
+
+On average, the share of younger district governors have steadily grown after formation of the NUG. However, age of district governors does not appear to have a robust relationship.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district security and age of district governors"}
+df2[!is.na(df2$secure), c("province", "district", "date", "secure", "ageGrps2")] %>% group_by(date, secure, ageGrps2) %>% tally %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age") + theme(axis.text.x = element_text(angle = 90, vjust = .5))
+```
+
+Since the formation of NUG, the share of university educated district governors have grown. Particularly, the more secure districts have greater gain in terms of appointing more educated governors.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district security and education of district governors"}
+df2[!is.na(df2$secure), c("province", "district", "date", "secure", "education")] %>% group_by(date, secure, education) %>% tally %>% 
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Education") + theme(axis.text.x=element_text(angle=90, vjust = .5))
+```
+
+\newpage
+While about half of district governors are Pashtun, they are mostly at districts that are insecure. In secure districts, the share of governors that belong to other ethnic groups, particularly Tajik, are greater.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district security and ethnicity of district governors"}
+df2[!is.na(df2$secure), c("province", "district", "date", "secure", "majEthnic")] %>% group_by(date, secure, majEthnic) %>% tally %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Ethnicity") + theme(axis.text.x=element_text(angle=90, vjust = .5))
+```
+
+Insecure district on average had more governors that were appointed through an uncompetitive process than secure districts. However, there is a slight uptick in the share of uncompetitively hired governors in secure districts in the past one year. This trend corresponds with an overall growth in uncompetitive recruitments of district governors, which is discussed in Section 1.2.5.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between district security and type of appointment of district governors"}
+df2[!is.na(df2$secure), c("province", "district", "date", "secure", "competitiveHiring")] %>% group_by(date, secure, competitiveHiring) %>% tally %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Appointment\nType") + theme(axis.text.x=element_text(angle=90, vjust = .5))
+```
+
+\newpage
+
+### Border Districts and Districts with Land Ports
+
+There are 82 districts that share border with neighboring countries. More than half (44 districts) in 11 provinces borders Pakistan, 10 districts in 3 provinces borders Iran, and 36 districts in 8 provinces borders Tajikistan, Uzbekistan, Turkmenistan, and China. There are five districts that border more than one country, such as Wakhan districts which borders three countries: Pakistan, Tajikitan and China. In some cases, sharing border is associated with negative security situation of districts. Looking at which country a district shares borders with, the negative relationship is greatest for districts sharing a border with Pakistan and Turkmenistan, while it is the negative relationship is the least for districts bordering Tajikistan and Uzbekistan. There are other factors associated with districts that share a border with Pakistan and Turkmenistan; for example those districts are among the biggest producers of oppium poppy, with three-quarter of all opium poppy cultivated in 2017 happened in those districts. Districts that share border with Tajikistan and Uzbekistan on the other hand cultivated relatively a negligible amount of poppy opium. Security and opium poppy cultivation seem to be associated--see Section 1.1.7 for more details.
+
+Among 82 districts, Afghanistan have 10 formal land ports with its neighbors. These land ports are situated in 9 provinces connecting Afghanistan with five of its neighboring countries. With the exception of Zaranj city which is capital of Nimroz province, the other 9 land ports are in districts other than provincial capitals. The number of land ports with neighboring countries appear to be proportionate to the border length shared. For instance, Afghanistan has 3 land ports with Pakistan which shares the longest border. Others include 2 land ports with each of Iran, Tajikistan and Turkmenistan, and one port with Uzbekistan—there is no formal land port between Afghanistan and China. The map below shows border districts and districts with ports.
+
+```{r borderMap, echo=FALSE, out.width="100%", fig.cap="Districts that border a neighboring country and districts with land ports"}
+include_graphics("~/Documents/My Consultancies/IDLG District Governor's Report/Maps/border and port.png")
+```
+
+\newpage
+In the following graphs, relationship between border and other district indictors such as security status, extractive mineral resources/mines, adjacentness to provincial centers, and access to highway are explored.
+
+Security and sharing border do not have a robust relationship. The most notable aspect of this relationship is that districts that do no share border are slightly more secure than districts that share a border with any neighboring country, on average. The secureness of districts without border could be driven mainly by districts that are remote.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and security status"}
+unique(df[, c("province", "district", "border", "secure")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(border, Freq, fill=secure)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="Status")
+```
+
+Existence of mineral resources/mines in a district does not appear to be associated with border districts.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and having extractive mineral resources/mines"}
+unique(df[, c("province", "district", "border", "mines")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(border, Freq, fill=mines)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+Most of districts in the vicinity of provincical centers do not share a border with a neighboring country.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and adjacentness to provincial centers"}
+unique(df[, c("province", "district", "border", "suburb")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(border, Freq, fill=suburb)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+There is a similar proportion in highway access for districts that share border with a neighboring country and districts that do not share border.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and access to highway"}
+unique(df[, c("province", "district", "border", "highway")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(border, Freq, fill=highway)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+There are few grade 1 districts that are at the borders, and most bordering districts are grade 2.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and district grade"}
+unique(df[, c("province", "district", "border", "grade")]) %>% select(3:4) %>% table %>% data.frame %>% ggplot(aes(border, Freq, fill=grade)) + 
+  geom_col(position = "dodge") + theme_bw() + labs(x="", fill="")
+```
+
+Additional graphs explore the relationship between security and district governors' characteristics such as age, education, ethnicity, and appointment/recruitment type.
+
+The average age for districts that share border with a neighboring country has fallen in the past two years.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and district governor's age"}
+df2[, c("province", "district", "date", "border", "ageGrps2")] %>% group_by(date, border, ageGrps2) %>% tally %>% filter(!is.na(border)) %>% ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + 
+  facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") + labs(x="", y="Ratio", fill="Age") + theme(axis.text.x = element_text(angle=90, vjust=.5))
+edBordr95 <- df2[df2$date==as.Date("1395-01-01") & !is.na(df2$firstname) & df2$border=="With Border", c("education")] %>% table %>% prop.table %>% data.frame %>% {sum(.[1:2, 2])*100} %>% round(1)
+edBordr96 <- df2[df2$date==as.Date("1396-12-30") & !is.na(df2$firstname) & df2$border=="With Border", c("education")] %>% table %>% prop.table %>% data.frame %>% {sum(.[1:2, 2])*100} %>% round(1)
+```
+
+Similar to age of district governors, in temrs of education also district governors from districts that share a border with a neighboring country. Currently in districts that share border with a neighboring country, over half (`r paste0(edBordr96, ".0")`%) of district governors have a university degree, which is an increase from of `r edBordr95` percent since two years ago.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and district governor's education"}
+df2[, c("province", "district", "date", "border", "education")] %>% group_by(date, border, education) %>% tally %>% ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + 
+  facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") + labs(x="", y="Ratio", fill="Education") + theme(axis.text.x = element_text(angle=90, vjust=.5))
+```
+
+In terms of ethnicity, more than half of governors of bordering districts are Pashtun, while there is no Hazara district governor in districts that share a border with another country--perhaps due to the fact that majority of Hazara districts are located in central region of Afghanistan.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationshipo between sharing border with a neighboring country and district governor's ethnicity"}
+df2[, c("province", "district", "date", "border", "majEthnic")] %>% group_by(date, border, majEthnic) %>% tally %>% ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + 
+  facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") + labs(x="", y="Ratio", fill="Ethnicity") + theme(axis.text.x = element_text(angle=90, vjust=.5))
+```
+
+\newpage
+The relationship between border districts and type of appointment of governors is a strong one, with districts that share border with a neighboring country having more uncompetitively recruited governors. This is however changing as a growing number of governors were appointed through uncompetitive processes in districts tthat do not share a border.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between sharing border with a neighboring country and type of appointment of district governors"}
+df2[, c("province", "district", "date", "border", "competitiveHiring")] %>% group_by(date, border, competitiveHiring) %>% tally %>% ggplot(aes(date, n, fill = competitiveHiring)) +
+  geom_area(position = "fill") + facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") + 
+  labs(x="", y="Ratio", fill="Appointment\nType") + theme(axis.text.x = element_text(angle=90, vjust=.5))
+```
+
+\newpage
+
+### Districts Bordering Provincial Centers
+
+```{r}
+sbDist <- unique(df[df$suburb=="Adjacent to a Provincial Center", c("province", "district")]) %>% nrow
+```
+
+There are `r sbDist` districts which are classified as districts that surround the 34 provincial centers These districts are more likely to have a better transportation infrastructure and are expected to have better economic conditions due to this connectivity and proximity to the provincial capitals. Furthermore, the districts that are attached to the provincial capitals on average have lower rate of opium poppy cultivation, unless they border with Pakistan and Iran (for more details see Section 1.1.7). In other words, districts next to the provincial centers and bordering Pakistan or Iran have significantly more opium poppy cultivation than other districts.
+
+\newpage
+In the following graphs, relationship between adjacentness to the provincial centers and other district indictors such as security, having border and land ports with neigboring countries, extractive mineral resources/mines, district grade, and access to highway are explored.
+
+Proportionately, more districts in the vicinity of provincial centers are classified as "secure" compared to districts that are not in the vicinity of provincial centers. However the proportion of districts that are classified insecure is also higher among districts in vicinity of provincial centers. Additionally, more inactive districts are among districts that are remote and not in vicinity of provincial centers.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and security status"}
+unique(df[, c("province", "district", "suburb", "secure")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(suburb, Freq, fill=secure)) + coord_flip() +
+  geom_col(position = "fill") + theme_bw() + labs(x="", fill="Status")
+```
+
+There is a negative relationship between sharing a border with a neighboring country and sharing border with a provincial center. Districts that are located in vicinity of provincial centers are more likely to not share border with a neighboring country. This is perhaps drive by the fact that many provinces that do not share border with any neighboring country.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and sharing border with neighboring countries"}
+unique(df[, c("province", "district", "suburb", "border")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(suburb, Freq, fill=border)) + coord_flip() +
+  geom_col(position = "fill") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and having a land port"}
+unique(df[, c("province", "district", "suburb", "ports")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(suburb, Freq, fill=ports)) + coord_flip() +
+  geom_col(position = "fill") + theme_bw() + labs(x="", fill="")
+```
+
+Prevalence of extractive mineral resources/mines is about the same for districts that are in vicinity of provincial centers and those that are not in vicinity of provincial centers.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and having extractive mineral resources/mines"}
+unique(df[, c("province", "district", "suburb", "mines")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(suburb, Freq, fill=mines)) + coord_flip() +
+  geom_col(position = "fill") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+Adjacentness to provincial centers could imply greater connectivity and more population. As such, there are more districts in vicinity of provincial centers that are grade 1 and 2 than districts that are detached from provincial centers.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and district grade"}
+unique(df[, c("province", "district", "suburb", "grade")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(suburb, Freq, fill=grade)) + coord_flip() +
+  geom_col(position = "fill") + theme_bw() + labs(x="", fill="")
+```
+
+The relation between access to highway and adjacentness to provincial centers is a positive one, with more districts next to provincial centers having access to highway than districts detached from provincial centers.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and access to highway"}
+unique(df[, c("province", "district", "suburb", "highway")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(suburb, Freq, fill=highway)) + coord_flip() +
+  geom_col(position = "fill") + theme_bw() + labs(x="", fill="")
+```
+
+\newpage
+In the following graphs, relationship between adjacentness to the provincial centers and characteristics of district governors such as nativity, age, ethnicity, education, and type of recruitment are explored.
+
+While on average most of district governors are native to the province they are serving, governors of districts in the vicinity of provincial centers are more non-native comparably.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and district governor's nativity"}
+unique(df2[, c("province", "district", "date", "suburb", "native")]) %>% group_by(date, suburb, native) %>% tally %>% ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") +
+  facet_wrap(~suburb) + theme_bw() + labs(x="", y="Ratio", fill="") + theme(axis.text.x = element_text(angle = 90, vjust = .5)) + geom_vline(xintercept = nugIncept, col = "navy")
+```
+
+In terms of age, governors of districts in vicinity of provincial centers are younger and has become younger since the formation of NUG.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between adjacentness to provincial centers and district governor's age"}
+unique(df2[, c("province", "district", "date", "suburb", "ageGrps2")]) %>% group_by(date, suburb, ageGrps2) %>% tally %>% ggplot(aes(date, n, fill=ageGrps2)) + geom_area(position="fill") +
+  facet_wrap(~suburb) + theme_bw() + labs(x="", y="Ratio", fill="Age") + theme(axis.text.x = element_text(angle = 90, vjust = .5)) + geom_vline(xintercept = nugIncept, col = "navy")
+```
+
+\newpage
+In terms of ethnicity, districts not in vicinity of provincial centers have growing share of Tajik govenrors in the last two years.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+unique(df2[, c("province", "district", "date", "suburb", "majEthnic")]) %>% group_by(date,suburb,majEthnic) %>% tally %>% ggplot(aes(date,n,fill=majEthnic)) + geom_area(position="fill") +
+  facet_wrap(~suburb) + theme_bw() + labs(x="", y="Ratio", fill="Ethnicity") + theme(axis.text.x=element_text(angle=90, vjust=.5)) + geom_vline(xintercept=nugIncept, col="navy")
+```
+
+Overall, growing number of district governors have university degree, particularly in the last two years. However, there is difference in educational attainment between governors of districts that are adjacent to provincial centers and those that are not. Overall, governors of districts in vicinity of provincial centers have been more educated and remain the same, despite rapid improvement in educational attainment of governors from districts that are not adjacet to any provincial centers.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+unique(df2[, c("province","district","date","suburb","education")]) %>% group_by(date,suburb,education) %>% tally %>% ggplot(aes(date,n,fill=education)) + geom_area(position="fill") +
+  facet_wrap(~suburb) + theme_bw() + labs(x="", y="Ratio", fill="Education") + theme(axis.text.x=element_text(angle=90, vjust=.5)) + geom_vline(xintercept=nugIncept, col="navy")
+hire95 <- df2[df2$date==as.Date("1395-01-01") & df2$suburb=="Adjacent to a Provincial Center", c("competitiveHiring")] %>% table %>% prop.table %>% {data.frame(.)[[2,2]]*100} %>% round(1)
+hire96 <- df2[df2$date==as.Date("1396-12-30") & df2$suburb=="Adjacent to a Provincial Center", c("competitiveHiring")] %>% table %>% prop.table %>% {data.frame(.)[[2,2]]*100} %>% round(1)
+```
+
+\newpage
+Most district governors have been appointed through competitive processes. There is however, a growing practice of appointing district governors through uncompetitive processes in the past 2 years. Particularly, governors of districts adjacent to provincial centers that had much less record of uncompetitive appointments have seen a surge in uncompetitive appointments. To compare, two years ago `r hire95` percent of governors in districts adjacent to provincial centers had been appointed through uncompetitive process, compared to `r hire96` percent currently.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE}
+unique(df2[, c("province", "district", "date", "suburb", "competitiveHiring")]) %>% group_by(date,suburb,competitiveHiring) %>% tally %>% ggplot(aes(date,n,fill=competitiveHiring)) +
+  geom_area(position="fill") + facet_wrap(~suburb) + theme_bw() + labs(x="", y="Ratio", fill="Appointment\nType") + theme(axis.text.x=element_text(angle=90, vjust=.5)) +
+  geom_vline(xintercept=nugIncept, col="navy")
+```
+
+\newpage
+
+### Districts with Mineral Deposits / Mines
+
+Of 384 districts, 151 districts have at least one extractive mineral resource/mine. These districts are scattered across all provinces, except Paktia which does not record a single mine within its territory. The mineral resources have the highest concentration in Samangan, Laghman, Parwan, Herat, Logar and Uruzgan provinces where two-thirds or more of the districts have mineral deposits. The following map highlights distrcts that possess at least one extractive mineral resource/mine within its territory.
+
+```{r mines, echo=FALSE, out.width="100%", fig.cap="\\label{fig:figs}Districts with extractive mineral resources / mines"}
+include_graphics("~/Documents/My Consultancies/IDLG District Governor's Report/Maps/mines.png")
+```
+
+\newpage
+In the following graphs, relationship between endowment of extractive mineral resources/mines and other district characteristics such as security status, sharing border and port with a neighboring country, district grade, adjacentness to provincial centers, and access to highway are explored.
+
+There is not a meaningful relationship between endowment of extractive mineral resources/mines and security status. While more districts that do not have an extractive mineral resource/mine in their territories, they are also more likely to be insecure and have fallen to the hands of anti-government elements.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between having a mineral deposit / mine, and security situation"}
+unique(df[, c("province", "district", "mines", "secure")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(mines, Freq, fill=secure)) +
+  geom_col(position = "fill") + theme_bw() + labs(x="", y="Ratio", fill="")
+```
+
+The relationship between endowment of extractive mineral resource/mine and sharing border with a neighboring country is also not a meaningful one.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relatinoship between having extractive mineral resource/mine and border with a neighboring country"}
+unique(df[, c("province", "district", "mines", "border")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(mines, Freq, fill=border)) +
+  geom_col(position = "fill") + theme_bw() + labs(x="", y="Ratio", fill="")
+```
+
+\newpage
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between having extractive mineral resource/mine and land port"}
+unique(df[, c("province", "district", "mines", "ports")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(mines, Freq, fill=ports)) +
+  geom_col(position = "fill") + theme_bw() + labs(x="", y="Ratio", fill="")
+```
+
+Districts with endowment of extractive mineral resources/mines are more likely to have grades 1 or 2, which are better.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between having extractive mineral resource/mine and district grade"}
+unique(df[, c("province", "district", "mines", "grade")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(mines, Freq, fill=grade)) +
+  geom_col(position = "fill") + theme_bw() + labs(x="", y="Ratio", fill="")
+```
+
+\newpage
+The share of districts with endowment of extractive mineral resources/mines is the same for districts in vicinity of provincial centers and districts that are not in vicinity of provincial centers.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between having extractive mineral resource/mine and adjacentness to a provincial center"}
+unique(df[, c("province", "district", "mines", "suburb")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(mines, Freq, fill=suburb)) +
+  geom_col(position = "fill") + theme_bw() + labs(x="", y="Ratio", fill="")
+```
+
+Districts with endowment of extractive mineral resources are more likely to have access to highway.
+
+```{r echo=FALSE, fig.height=3, message=FALSE, warning=FALSE, fig.cap="Relationship between having extractive mineral resource/mine and access to highway"}
+unique(df[, c("province", "district", "mines", "highway")]) %>% select(3:4) %>% table() %>% data.frame %>% ggplot(aes(mines, Freq, fill=highway)) +
+  geom_col(position = "fill") + theme_bw() + labs(x="", y="Ratio", fill="")
+```
+
+\newpage
+In the next few graphs, relationship between districts having extractive mineral resources/mines and characteristics of their governors including age, education, nativity, ethnicity and type of appoitment/recruitment are explored.
+
+Age-wise, districts with or without extractive mineral resources have been largely similar on avarge.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between having extractive mineral resource/mine and district governor age"}
+unique(df2[, c("province", "district", "date", "mines", "ageGrps2")]) %>% group_by(date, mines, ageGrps2) %>% tally %>% filter(!is.na(mines)) %>% ggplot(aes(date, n, fill = ageGrps2)) +
+  geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + labs(x="", y="Ratio", fill="Age") + theme(axis.text.x = element_text(angle = 90, vjust = .5)) +
+  geom_vline(xintercept = nugIncept, col = "navy")
+edwMine <- df2[df2$date==as.Date("1396-12-30") & df2$mines=="With Mine", c("education")] %>% table(useNA = "ifany") %>% prop.table %>% data.frame %>% {sum(.[1:2, 2]*100)} %>% round(1)
+edwoMine <- df2[df2$date==as.Date("1396-12-30") & df2$mines=="Without Mine", c("education")] %>% table(useNA = "ifany") %>% prop.table %>% data.frame %>% {sum(.[1:2, 2]*100)} %>% round(1)
+```
+
+However, governors of districts that possess extractive mineral resources are more educated (`r paste0(edwMine,".0")`%) than districts without those resources (`r edwoMine`%).
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between having extractive mineral resource/mine and district governor age"}
+unique(df2[, c("province", "district", "date", "mines", "education")]) %>% group_by(date, mines, education) %>% tally %>% filter(!is.na(mines)) %>% ggplot(aes(date, n, fill = education)) +
+  geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + labs(x="", y="Ratio", fill="Education") + theme(axis.text.x = element_text(angle = 90, vjust = .5)) +
+  geom_vline(xintercept = nugIncept, col = "navy")
+```
+
+\newpage
+Irrespective of district characteristics, most district governors are native. But comparing districts with and without extractive mineral resources/mines, districts with those resources have a slightly higher share of non-native governors.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between having extractive mineral resource/mine and district governor age"}
+unique(df2[, c("province", "district", "date", "mines", "native")]) %>% group_by(date, mines, native) %>% tally %>% filter(!is.na(mines)) %>% ggplot(aes(date, n, fill = native)) +
+  geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + labs(x="", y="Ratio", fill="") + theme(axis.text.x = element_text(angle = 90, vjust = .5)) +
+  geom_vline(xintercept = nugIncept, col = "navy")
+```
+
+In terms of ethnicity of governors, districts with extractive mineral resources/mines have slightly more Pashtun and Hazara governors. Share of Tajik governors in districts with or without the endowment is identical.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between having extractive mineral resource/mine and district governor age"}
+unique(df2[, c("province", "district", "date", "mines", "majEthnic")]) %>% group_by(date, mines, majEthnic) %>% tally %>% filter(!is.na(mines)) %>% ggplot(aes(date, n, fill = majEthnic)) +
+  geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + labs(x="", y="Ratio", fill="Ethnicity") + theme(axis.text.x = element_text(angle = 90, vjust = .5)) +
+  geom_vline(xintercept = nugIncept, col = "navy")
+```
+
+\newpage
+Competitive appointments of govenors have been more prevalent for districts with extractive mineral resources/mines.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between having extractive mineral resource/mine and district governor age"}
+unique(df2[, c("province", "district", "date", "mines", "competitiveHiring")]) %>% group_by(date, mines, competitiveHiring) %>% tally %>% filter(!is.na(mines)) %>% 
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + labs(x="", y="Ratio", fill="Appointment\nType") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = .5)) +geom_vline(xintercept = nugIncept, col = "navy")
+```
+
+\newpage
+
+### Opium Poppy Cultivation by Districts
+
+United Nations Offices on Drugs and Crime (UNODC) reported a record high opium poppy cultivation of 328,355 hectares in 2017, which shows a 63.1% increase from 2016. Helmand province alone accounted for 43.9% of total area under opium poppy cultivation in 2017, which saw a 79.4% increase in cultivation since 2016. The greatest increase however took place in Jawzjan and Faryab provinces, whose area under opium poppy cultivation grew 691.7% and 680.0% respectively. Badghis on the other hand was the only province where there was a reduction in opium poppy cultivation from 35,235 to 24,723 hectares of land--a 29.8% reduction. The following figure shows the country level cultivation of opium poppy since 1994.
+
+```{r opium, echo=FALSE, out.width="100%", fig.cap="Opium poppy cultivation in Afghanistan between 1994 and 2017 in hectares", fig.subcap="Sources: MCN/UNODC opium surveys 1994-2017. The vertical lines represent the upper and lower bounds of the 95% confidence interval"}
+include_graphics("~/Documents/My Consultancies/IDLG District Governor's Report/Maps/opium cultivation by year.png")
+```
+
+\newpage
+In the following figures, relationship between poppy cultivation and district characteristics such as security, access to highway, extractive minerals/mines, xx are explored.
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+secOpiumCorr <- unique(df2[, c("province", "district", "year", "cultivation", "secure")]) %>% filter(!is.na(secure)) %>% {cor.test(.$cultivation, as.numeric(.$secure))} %>% 
+  {.[[4]]*100} %>% round(1)
+```
+
+There is a negative correlation between how secure a district is and how large the area under opium poppy cultivation is in that district. A simple correlation yields a coefficient of `r secOpiumCorr`%. The following figure relationship between security status and cultivation area is plotted, with each dot representing one district in one year.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.5, fig.cap="Relationship between opium poppy cultivation and security status"}
+unique(df2[, c("province", "district", "year", "cultivation", "secure")]) %>% filter(!is.na(secure)) %>% 
+  ggplot(aes(secure, log(cultivation), col = year)) + geom_jitter(alpha = .5, width = .2) + theme_bw() + labs(x="", y="Log-Cultivation", col="Year")
+hwOpiumCorr <- unique(df2[, c("province", "district", "year", "cultivation", "highway")]) %>% filter(!is.na(highway)) %>% {cor.test(.$cultivation, as.numeric(.$highway))} %>% 
+  {.[[4]]*100} %>% round(1)
+```
+
+There is a subtle positive relationship between access to highway and amount of opium poppy cultivation. In other words, on average, districts that have access to highway also cultivated larger areas of land with opium poppy. The relationship can be quantified using simple correlation, which yields a coefficient of `r hwOpiumCorr`%.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.5, fig.cap="Relationship between opium poppy cultivation and access to highway"}
+unique(df2[, c("province", "district", "year", "cultivation", "highway")]) %>% filter(!is.na(highway)) %>% 
+  ggplot(aes(highway, log(cultivation), col = year)) + geom_jitter(alpha = .5, width = .2) + theme_bw() + labs(x="", y="Log-Cultivation", col="Year")
+mineOpiumCorr <- unique(df2[, c("province", "district", "year", "cultivation", "mines")]) %>% filter(!is.na(mines)) %>% {cor.test(.$cultivation, as.numeric(.$mines))} %>% 
+  {.[[4]]*100} %>% round(1)
+```
+
+\newpage
+There is no robust relationship between how large area under cultivation is and whether the district have extractive minerals/mines.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.5, fig.cap="Relationship between opium poppy cultivation and extractive mineral resources/mines"}
+unique(df2[, c("province", "district", "year", "cultivation", "mines")]) %>% filter(!is.na(mines)) %>% 
+  ggplot(aes(mines, log(cultivation), col = year)) + geom_jitter(alpha = .5, width = .2) + theme_bw() + labs(x="", y="Log-Cultivation", col="Year")
+borderOpiumCorr <- unique(df2[, c("province", "district", "year", "cultivation", "border")]) %>% filter(!is.na(border)) %>% {cor.test(.$cultivation, as.numeric(.$border))} %>% 
+  {.[[4]]*100} %>% round(1)
+```
+
+There is no meaningful relationship between whether the district borders another country and how large the area under cultivation of opium poppy.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.5, fig.cap="Relationship between opium poppy cultivation and extractive mineral resources/mines"}
+unique(df2[, c("province", "district", "year", "cultivation", "border")]) %>% filter(!is.na(border)) %>% 
+  ggplot(aes(border, log(cultivation), col = year)) + geom_jitter(alpha = .5, width = .2) + theme_bw() + labs(x="", y="Log-Cultivation", col="Year")
+portOpiumCorr <- unique(df2[, c("province", "district", "year", "cultivation", "ports")]) %>% filter(!is.na(ports)) %>% {cor.test(.$cultivation, as.numeric(.$ports))} %>% 
+  {.[[4]]*100} %>% round(1)
+```
+
+\newpage
+The relationship between cultivation of opium poppy and having land port is also not meaningful.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.5, fig.cap="Relationship between opium poppy cultivation and extractive mineral resources/mines"}
+unique(df2[, c("province", "district", "year", "cultivation", "ports")]) %>% filter(!is.na(ports)) %>% 
+  ggplot(aes(ports, log(cultivation), col = year)) + geom_jitter(alpha = .5, width = .2) + theme_bw() + labs(x="", y="Log-Cultivation", col="Year")
+gradeOpiumCorr <- unique(df2[, c("province", "district", "year", "cultivation", "grade")]) %>% filter(!is.na(grade)) %>% {cor.test(.$cultivation, as.numeric(.$grade))} %>% 
+  {.[[4]]*100} %>% round(1)
+```
+
+There is a negative relationship between district grade and opium poppy harvest, with grade 1 districts cultivating more opium poppy than grade 2 and grade 3. This is perhaps an interesting finding given grade 1 districts on average have better security and are more population.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.5, fig.cap="Relationship between opium poppy cultivation and extractive mineral resources/mines"}
+unique(df2[, c("province", "district", "year", "cultivation", "grade")]) %>% filter(!is.na(grade)) %>% 
+  ggplot(aes(grade, log(cultivation), col = year)) + geom_jitter(alpha = .5, width = .2) + theme_bw() + labs(x="", y="Log-Cultivation", col="Year")
+subOpiumCorr <- unique(df2[, c("province", "district", "year", "cultivation", "suburb")]) %>% filter(!is.na(suburb)) %>% {cor.test(.$cultivation, as.numeric(.$suburb))} %>% 
+  {.[[4]]*100} %>% round(1)
+```
+
+\newpage
+There is no meaning relationship between whether district is in vicinity of a provincial district and size of opium poppy harvest.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3.5, fig.cap="Relationship between opium poppy cultivation and extractive mineral resources/mines"}
+unique(df2[, c("province", "district", "year", "cultivation", "suburb")]) %>% filter(!is.na(suburb)) %>% 
+  ggplot(aes(suburb, log(cultivation), col = year)) + geom_jitter(alpha = .5, width = .2) + theme_bw() + labs(x="", y="Log-Cultivation", col="Year")
+```
+
+
+
+

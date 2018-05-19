@@ -1,0 +1,505 @@
+
+```{r warning=FALSE, include=FALSE, message=FALSE}
+require(tidyverse)
+require(data.table)
+require(lubridate)
+require(maptools)
+require(knitr)
+df <- read_csv("~/Documents/My Consultancies/IDLG District Governor's Report/DG data (March 19) v5.csv")
+```
+```{r warning=FALSE, include=FALSE}
+df$education <- factor(df$education, levels = c("Master's degree", "Bachelor degree", "14th grade", "School certificate", "School incomplete", "Private education"))
+df$majEthnic <- ifelse(df$ethnic == "Pashtun", "Pashtun", 
+                       ifelse(df$ethnic == "Tajik", "Tajik", ifelse(df$ethnic == "Hazara", "Hazara", ifelse(df$ethnic == "Uzbek", "Uzbek", ifelse(!is.na(df$ethnic), "Others", NA)))))
+df$majEthnic <- factor(df$majEthnic, levels = c("Pashtun", "Tajik", "Hazara", "Uzbek", "Others"))
+df$native <- as.character(df$native)
+df$native <- ifelse(df$native == "TRUE", "Native", ifelse(df$native == "FALSE", "Non-native", NA))
+df$competitiveHiring <- ifelse(df$dghiring=="Competitive", "Competitive", ifelse(is.na(df$dghiring), NA, "Uncompetitive")) %>% factor(ordered = T)
+df <- mutate(df, startyear = year(df$startdate), startAge = startyear - birthyear, 
+             ageGrps = ifelse(startAge<=30, 1, ifelse(startAge<=40, 2, ifelse(startAge<=50, 3, ifelse(startAge<=60, 4, 5)))))
+df$ageGrps <- factor(df$ageGrps, labels = c("Up to 30", "31-40", "41-50", "51-60", "More than 60"))
+df$secure <- factor(df$secure, levels = c("Not Active","Insecure","Somewhat Insecure","Somewhat Secure","Secure"), ordered = T)
+df$native <- df$pob == df$province
+df <- mutate(df, border=factor(border, labels=c("Without Border", "With Border")), 
+             ports=factor(ports, labels=c("Without Port", "With Port")), 
+             mines=factor(mines, labels=c("Without Mine", "With Mine")), 
+             grade=factor(grade, labels=c("Grade 1", "Grade 2", "Grade 3")), 
+             suburb=factor(suburb, labels=c("Not Adjacent to a Provincial Center", "Adjacent to a Provincial Center")), 
+             highway=factor(highway, labels=c("Without Highway", "With Highway")), 
+             native=factor(native, labels=c("Non-Native", "Native")))
+
+df2 <- data.table(select(df, -interval))
+df2 <- df2[, list(prov,district,firstname,fathername,pob,birthyear,ageGrps,majEthnic,competitiveHiring,education,native,polpartyaffiliation,pastpolpartyaffiliation,province,dist,status,secure,security,border,ports,mines,grade,suburb,highway, date = seq(startdate, enddate, by = "day")), by = 1:nrow(df)]
+df2$age <- as.numeric((as.Date(df2$date) - as.Date(paste0(df2$birthyear, "-07-01")))/365)
+df2$ageGrps2 <- if_else(df2$age<30.5, 1, if_else(df2$age<40.5, 2, if_else(df2$age<50.5, 3, if_else(df2$age<60.5, 4, 5))))
+df2$ageGrps2 <- factor(df2$ageGrps2, labels = c("Up to 30", "31-40", "41-50", "51-60", "More than 60"))
+
+nugIncept <- as.Date("1393-07-07")
+incept <- format.Date(nugIncept, "%d/%m/%Y") %>% as.character()
+nugHired <- filter(df, startdate > nugIncept & !is.na(firstname))
+shp <- readShapePoly("~/Desktop/ShinyApps/Province mapmaker/AFG_adm1.shp")
+```
+
+\newpage
+
+
+## DISTRICT GOVERNORS
+
+### Age of District Governors
+
+At the end of 1396, the average age of district governors was 47.0 years, which is one year older than at the end of 1392. However, the average age of all district governors has had many fluctuations in the span of four years. At the end of 1396, the oldest district governor was Haji Hamisha Gul Shinwari from Dur Baba district of Nangarhar, who was born in 1328. The youngest district governor was Mohammad Khan in Fersi district in Herat province who was born in 1374. Below table lists the oldest and youngest district governors at the end of 1396.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+filter(df, enddate == as.Date("1396-12-30")) %>% arrange(birthyear) %>% mutate(age = 1397-birthyear) %>% select(province, dist, age) %>% head(5) %>% 
+  kable(col.names = c("Province", "District", "Age"), caption = "Oldest District Governors")
+filter(df, enddate == as.Date("1396-12-30")) %>% arrange(desc(birthyear)) %>% mutate(age = 1397-birthyear) %>% select(province, dist, age) %>% head(5) %>% 
+  kable(col.names = c("Province", "District", "Age"), caption = "Youngest District Governors")
+```
+
+The age of district governors appears to have some relationship with districts’ geo-political characteristics. On average, more strategic districts which are classified as grade 1 and districts that are adjacent to the provincial centers have had significantly older district governors in the past 4 years. Resource rich districts which have any type of mines or ports, or borders a foreign country other than Pakistan, have younger district governors on average. There is also a negative relationship between district governors age and the opium poppy cultivation, with younger governors corresponding with greater opium poppy cultivation. Districts’ security condition or having highway cross the district does not appear to have clear relationship with the age of district governors. Figures below visualizes the relationship between the district characteristics and age of their governors at the national level across time. Additional figures are provided in the annex [#].
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Age of district governors across time"}
+df2[, c("prov", "district", "date", "ageGrps2")] %>% group_by(date, ageGrps2) %>% tally %>% ggplot(aes(date, n, fill = ageGrps2)) + geom_area() + theme_bw() + 
+  geom_vline(xintercept = nugIncept, col = "navy") + labs(x="", y="Ratio", fill="Age")
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and districts' security status"}
+df2[, c("province", "district", "date", "ageGrps2", "secure")] %>% group_by(date, ageGrps2, secure) %>% tally %>% filter(!is.na(secure)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and districts' grade"}
+df2[, c("province", "district", "date", "ageGrps2", "grade")] %>% group_by(date, ageGrps2, grade) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and districts' access to highway"}
+df2[, c("province", "district", "date", "ageGrps2", "highway")] %>% group_by(date, ageGrps2, highway) %>% tally %>% 
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and districts' being adjacent to a provincial center"}
+df2[, c("province", "district", "date", "ageGrps2", "suburb")] %>% group_by(date, ageGrps2, suburb) %>% tally %>% 
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~suburb) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and districts' having a border with a neighboring country"}
+df2[, c("province", "district", "date", "ageGrps2", "border")] %>% group_by(date, ageGrps2, border) %>% tally %>% 
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and districts' having a land port with a neighboring country"}
+df2[, c("province", "district", "date", "ageGrps2", "ports")] %>% group_by(date, ageGrps2, ports) %>% tally %>% 
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~ports) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and districts' having a mineral deposit / mine"}
+df2[, c("province", "district", "date", "ageGrps2", "mines")] %>% group_by(date, ageGrps2, mines) %>% tally %>% filter(!is.na(mines)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+relationship between age and other DG characteristics..
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and their educational attainment"}
+df2[, c("province", "district", "date", "ageGrps2", "education")] %>% group_by(date, ageGrps2, education) %>% tally %>% filter(!is.na(education)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~education) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and their ethnicity"}
+df2[, c("province", "district", "date", "ageGrps2", "majEthnic")] %>% group_by(date, ageGrps2, majEthnic) %>% tally %>% filter(!is.na(majEthnic)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~majEthnic) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and nativity"}
+df2[, c("province", "district", "date", "ageGrps2", "native")] %>% group_by(date, ageGrps2, native) %>% tally %>% filter(!is.na(native)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~native) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' age and type of their appointment / selection"}
+df2[, c("province", "district", "date", "ageGrps2", "competitiveHiring")] %>% group_by(date, ageGrps2, competitiveHiring) %>% tally %>% filter(!is.na(competitiveHiring)) %>%
+  ggplot(aes(date, n, fill = ageGrps2)) + geom_area(position = "fill") + facet_wrap(~competitiveHiring) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+\newpage
+
+### Educational attainment of district governors
+
+There has been a steady increase in the educational attainment of district governors in the last four years. For instance, in the beginning of the 1393, 43.0% of all district governors held a university degree such as bachelor or master’s degrees. At the end of 1396, this figure was 50.3%, which indicates a 17.0% (or 7.3 percentage points) increase in district governors with a university degree.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Educational attainment of district governors across time"}
+df2[, c("prov", "district", "date", "education")] %>% group_by(date, education) %>% tally %>% ggplot(aes(date, n, fill = education)) + geom_area() + theme_bw() + 
+  geom_vline(xintercept = nugIncept, col = "navy") + labs(x="", y="Ratio", fill="Age")
+```
+
+There is not a significant difference between educational attainment of governors in more important districts, classified as grade 1, and less important districts.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and districts' security status"}
+df2[, c("province", "district", "date", "education", "secure")] %>% group_by(date, education, secure) %>% tally %>% filter(!is.na(secure)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and districts' grade"}
+df2[, c("province", "district", "date", "education", "grade")] %>% group_by(date, education, grade) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and districts' access to highway"}
+df2[, c("province", "district", "date", "education", "highway")] %>% group_by(date, education, highway) %>% tally %>% 
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and districts' being adjacent to a provincial center"}
+df2[, c("province", "district", "date", "education", "suburb")] %>% group_by(date, education, suburb) %>% tally %>% 
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~suburb) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and districts' having a border with a neighboring country"}
+df2[, c("province", "district", "date", "education", "border")] %>% group_by(date, education, border) %>% tally %>% 
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and districts' having a land port with a neighboring country"}
+df2[, c("province", "district", "date", "education", "ports")] %>% group_by(date, education, ports) %>% tally %>% 
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~ports) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and districts' having a mineral deposit / mine"}
+df2[, c("province", "district", "date", "education", "mines")] %>% group_by(date, education, mines) %>% tally %>% filter(!is.na(mines)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+relationship between education and other DG characteristics..
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and their age"}
+df2[, c("province", "district", "date", "education", "ageGrps2")] %>% group_by(date, education, ageGrps2) %>% tally %>% filter(!is.na(ageGrps2)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~ageGrps2) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and their ethnicity"}
+df2[, c("province", "district", "date", "education", "majEthnic")] %>% group_by(date, education, majEthnic) %>% tally %>% filter(!is.na(majEthnic)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~majEthnic) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and nativity"}
+df2[, c("province", "district", "date", "education", "native")] %>% group_by(date, education, native) %>% tally %>% filter(!is.na(native)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~native) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' education and type of their appointment / selection"}
+df2[, c("province", "district", "date", "education", "competitiveHiring")] %>% group_by(date, education, competitiveHiring) %>% tally %>% filter(!is.na(competitiveHiring)) %>%
+  ggplot(aes(date, n, fill = education)) + geom_area(position = "fill") + facet_wrap(~competitiveHiring) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+\newpage
+
+### Ethnicity of district governors
+
+District governors of the past 4 years, report belonging to 14 different ethnic groups, but clear majority of them belong to the 4 major ethnic groups. At the end of 1396, Pashtun governors had the largest share of the districts (50.3%), followed by Tajik (25.8%), Hazara (7.3%) and Uzbek (7.3%) governors. Looking at the 4-year trend, the share of Pashtun and Tajik governors have increased somewhat.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Ethnicity of District governors across time"}
+df2[, c("prov", "district", "date", "majEthnic")] %>% group_by(date, majEthnic) %>% tally %>% ggplot(aes(date, n, fill = majEthnic)) + geom_area() + theme_bw() + 
+  geom_vline(xintercept = nugIncept, col = "navy") + labs(x="", y="Ratio", fill="Age")
+```
+
+On Average, insecure districts are more likely to have Pashtun governors, whereas, more secure districts are more likely to have Tajik and Hazara governors. Furthermore, Tajiks are less likely to have a governor in bordering districts, while there has not been any Hazara governor in those districts in the past 4 years. In terms of presence of highway, such districts are more likely to have Pashtun and Uzbek governors than districts without highway, while there is almost no Hazara governors in such districts.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and districts' security status"}
+df2[, c("province", "district", "date", "majEthnic", "secure")] %>% group_by(date, majEthnic, secure) %>% tally %>% filter(!is.na(secure)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and districts' grade"}
+df2[, c("province", "district", "date", "majEthnic", "grade")] %>% group_by(date, majEthnic, grade) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and districts' access to highway"}
+df2[, c("province", "district", "date", "majEthnic", "highway")] %>% group_by(date, majEthnic, highway) %>% tally %>% 
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and districts' being adjacent to a provincial center"}
+df2[, c("province", "district", "date", "majEthnic", "suburb")] %>% group_by(date, majEthnic, suburb) %>% tally %>% 
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~suburb) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and districts' having a border with a neighboring country"}
+df2[, c("province", "district", "date", "majEthnic", "border")] %>% group_by(date, majEthnic, border) %>% tally %>% 
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and districts' having a land port with a neighboring country"}
+df2[, c("province", "district", "date", "majEthnic", "ports")] %>% group_by(date, majEthnic, ports) %>% tally %>% 
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~ports) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and districts' having a mineral deposit / mine"}
+df2[, c("province", "district", "date", "majEthnic", "mines")] %>% group_by(date, majEthnic, mines) %>% tally %>% filter(!is.na(mines)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+relationship between ethnicity and other DG characteristics..
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and their age"}
+df2[, c("province", "district", "date", "majEthnic", "ageGrps2")] %>% group_by(date, majEthnic, ageGrps2) %>% tally %>% filter(!is.na(ageGrps2)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~ageGrps2) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and their education"}
+df2[, c("province", "district", "date", "majEthnic", "education")] %>% group_by(date, majEthnic, education) %>% tally %>% filter(!is.na(education)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~education) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and nativity"}
+df2[, c("province", "district", "date", "majEthnic", "native")] %>% group_by(date, majEthnic, native) %>% tally %>% filter(!is.na(native)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~native) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and type of their appointment / selection"}
+df2[, c("province", "district", "date", "majEthnic", "competitiveHiring")] %>% group_by(date, majEthnic, competitiveHiring) %>% tally %>% filter(!is.na(competitiveHiring)) %>%
+  ggplot(aes(date, n, fill = majEthnic)) + geom_area(position = "fill") + facet_wrap(~competitiveHiring) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+\newpage
+
+### Nativity of district governors
+
+Approximately 80% of districts have governors who are native to the province, and this trend has not changed significantly in the past 4 year.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Ethnicity of District governors across time"}
+df2[, c("prov", "district", "date", "native")] %>% group_by(date, native) %>% tally %>% ggplot(aes(date, n, fill = native)) + geom_area() + theme_bw() + 
+  geom_vline(xintercept = nugIncept, col = "navy") + labs(x="", y="Ratio", fill="Age")
+```
+
+There is notable difference if the district is adjacent to a provincial capital, where such districts have less native governors compared to the rest of districts. Another notable difference is if the district borders Pakistan; districts bordering Pakistan have less native governors, while other districts bordering countries other than Pakistan have more native governors than average. The share of native governors is also higher among districts that are classified as highly insecure. Moreover, almost all governors of districts with ports and districts classified as grade 1 district used to be native until mid-1395. Districts with highways are also more likely to have native governors. Figures below visualizes the relationship between the district characteristics and whether their governors were native to the province, at the national level across time.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' nativity and districts' security status"}
+df2[, c("province", "district", "date", "native", "secure")] %>% group_by(date, native, secure) %>% tally %>% filter(!is.na(secure)) %>%
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~secure) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' nativity and districts' grade"}
+df2[, c("province", "district", "date", "native", "grade")] %>% group_by(date, native, grade) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~grade) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' nativity and districts' access to highway"}
+df2[, c("province", "district", "date", "native", "highway")] %>% group_by(date, native, highway) %>% tally %>% 
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~highway) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' nativity and districts' being adjacent to a provincial center"}
+df2[, c("province", "district", "date", "native", "suburb")] %>% group_by(date, native, suburb) %>% tally %>% 
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~suburb) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' nativity and districts' having a border with a neighboring country"}
+df2[, c("province", "district", "date", "native", "border")] %>% group_by(date, native, border) %>% tally %>% 
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~border) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' nativity and districts' having a land port with a neighboring country"}
+df2[, c("province", "district", "date", "native", "ports")] %>% group_by(date, native, ports) %>% tally %>% 
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~ports) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' nativity and districts' having a mineral deposit / mine"}
+df2[, c("province", "district", "date", "native", "mines")] %>% group_by(date, native, mines) %>% tally %>% filter(!is.na(mines)) %>%
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~mines) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+relationship between nativity and other DG characteristics..
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and their age"}
+df2[, c("province", "district", "date", "native", "ageGrps2")] %>% group_by(date, native, ageGrps2) %>% tally %>% filter(!is.na(ageGrps2)) %>%
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~ageGrps2) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and their education"}
+df2[, c("province", "district", "date", "native", "education")] %>% group_by(date, native, education) %>% tally %>% filter(!is.na(education)) %>%
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~education) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="Age", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and nativity"}
+df2[, c("province", "district", "date", "native", "majEthnic")] %>% group_by(date, native, majEthnic) %>% tally %>% filter(!is.na(majEthnic)) %>%
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~majEthnic) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Relationship between district governors' ethnicity and type of their appointment / selection"}
+df2[, c("province", "district", "date", "native", "competitiveHiring")] %>% group_by(date, native, competitiveHiring) %>% tally %>% filter(!is.na(competitiveHiring)) %>%
+  ggplot(aes(date, n, fill = native)) + geom_area(position = "fill") + facet_wrap(~competitiveHiring) + theme_bw() + geom_vline(xintercept = nugIncept, col = "navy") +
+  labs(x="", y="Ratio", fill="", title="") + theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+\newpage
+
+### Appointment / Selection of District Governors
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+nugHired <- df %>% filter(!is.na(firstname), startdate > nugIncept)
+nAppoint <- nugHired %>% {.[, c("province", "district", "firstname", "startdate")]} %>% mutate(startdate = year(startdate)) %>% group_by(province, startdate) %>% tally %>% 
+  spread(startdate, n) %>% mutate(appmt = sum(`1393`, `1394`, `1395`, `1396`, na.rm = T)) %>% arrange(desc(appmt))
+recTot <- sum(nAppoint[[6]])
+hired <- table(nugHired$competitiveHiring, useNA = "ifany") %>% prop.table() %>% {round(.*100, 1)} %>% data.frame()
+dismiss <- nugHired %>% filter(enddate < as.Date("1396-12-30")) %>% nrow()
+dismissLen <- nugHired %>% filter(enddate < as.Date("1396-12-30")) %>% mutate(int = as.numeric(enddate - startdate)) %>% select(int) %>% {sum(.)/dismiss} %>% round(1)
+```
+
+Since the inception of the National Unity Government (NUG) on `r incept` till the end of 1396, `r recTot` district governors were appointed in all provinces. Table below provides the number of appointments by province across time since `r incept`.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+options(knitr.kable.NA = "")
+nAppoint %>% kable(col.names = c("Province", "1393*", "1394", "1395", "1396", "Total Appointments"), caption = "Number of Appointments of District Governors Since the Inception of NUG on `r nugIncept`")
+```
+
+The following graph provides a visual presentation of number of new district government appointments accross time. The red line indicates the inception of the NUG.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Appointments / selection of new district governors across time"}
+seq <- seq.Date(as.Date("1393-01-01"), as.Date("1396-12-30"), by = "day")
+rec <- numeric()
+for (i in seq) {
+  rec <- c(rec, filter(df, !is.na(firstname), startdate == as.Date(i, origin = "1970-01-01")) %>% nrow())
+}
+data.frame(seq, rec) %>% filter(seq > as.Date("1393-01-01")) %>% ggplot(aes(seq, rec)) + geom_line(alpha = .5) + geom_point(size = .4, alpha = .4) + geom_vline(xintercept = nugIncept, col = "red") + theme_bw() +
+  labs(x = "", y = "Number of Appointments")
+```
+
+Since the inception of NUG, in total `r recTot` district governors were appointed either as acting governors (`r hired[2,2]`%) or selected through competitive process (`r hired[1,2]`%)--remaining `r hired[3,2]` percent is unclear. Of those governors or acting governors, `r dismiss` district governors or acting governors were replaced by another by the end of 1396. On average, the length of their service was close to a year (`r dismissLen` days), with some as little as one month and as long as more than 2 years. The following graph illustrates the frequeny of lenght of service among `r dismiss` district governors who started under the NUG and were laid off.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Duration of Appointment for district governors that were appointed since the NUG and let go before end of 1396"}
+nugHired %>% filter(enddate < as.Date("1396-12-30")) %>% mutate(int = enddate - startdate) %>% arrange(desc(int)) %>% select(int) %>%
+  ggplot(aes(int)) + geom_histogram(fill = "navy") + theme_bw() + labs(x = "Duration in Days", Y = "Count")
+```
+
+Overall, the number of district governors appointed / selected via competitive process seem to be on decline in last year.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors across time"}
+df2[, c("province", "dist", "date", "competitiveHiring")] %>% group_by(date, competitiveHiring) %>% tally %>% ggplot(aes(date, n, fill = competitiveHiring)) + geom_area() + theme_bw() +
+  labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy")
+```
+
+The following graphs, the relationship between the type of appointments of district governments and district characteristics are explored using graphs. Note, the vertical line indicates the inception date of the NUG.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and security status"}
+df2[, c("province", "dist", "date", "competitiveHiring", "secure")] %>% group_by(date, competitiveHiring, secure) %>% tally %>% filter(!is.na(secure)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~secure) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and districts grade"}
+df2[, c("province", "dist", "date", "competitiveHiring", "grade")] %>% group_by(date, competitiveHiring, grade) %>% tally %>% filter(!is.na(grade)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~grade) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and district's access to highway"}
+df2[, c("province", "dist", "date", "competitiveHiring", "highway")] %>% group_by(date, competitiveHiring, highway) %>% tally %>% filter(!is.na(highway)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~highway) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and districts' being adjacent to a provincial center"}
+df2[, c("province", "dist", "date", "competitiveHiring", "suburb")] %>% group_by(date, competitiveHiring, suburb) %>% tally %>% filter(!is.na(suburb)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~suburb) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and districts' having a border with a neighboring country"}
+df2[, c("province", "dist", "date", "competitiveHiring", "border")] %>% group_by(date, competitiveHiring, border) %>% tally %>% filter(!is.na(border)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~border) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and districts' having a land port with a neighboring country"}
+df2[, c("province", "dist", "date", "competitiveHiring", "ports")] %>% group_by(date, competitiveHiring, ports) %>% tally %>% filter(!is.na(ports)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~ports) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and districts' having mineral deposits / mines"}
+df2[, c("province", "dist", "date", "competitiveHiring", "mines")] %>% group_by(date, competitiveHiring, mines) %>% tally %>% filter(!is.na(mines)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~mines) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+Furthermore, the relationship between the types of appointments of district governors and their characteristics such as education, age, ethnicity and nativity are explored using graphs. The vertical line in graphs idnicates the inception date of the NUG.
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and their age"}
+df2[, c("province", "dist", "date", "competitiveHiring", "ageGrps2")] %>% group_by(date, competitiveHiring, ageGrps2) %>% tally %>% filter(!is.na(ageGrps2)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~ageGrps2) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and their education"}
+df2[, c("province", "dist", "date", "competitiveHiring", "education")] %>% group_by(date, competitiveHiring, education) %>% tally %>% filter(!is.na(education)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~education) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and their ethnicity"}
+df2[, c("province", "dist", "date", "competitiveHiring", "majEthnic")] %>% group_by(date, competitiveHiring, majEthnic) %>% tally %>% filter(!is.na(majEthnic)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~majEthnic) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+```{r echo=FALSE, message=FALSE, warning=FALSE, fig.height=3, fig.cap="Share of competitive and uncompetitive district governors and their nativity"}
+df2[, c("province", "dist", "date", "competitiveHiring", "native")] %>% group_by(date, competitiveHiring, native) %>% tally %>% filter(!is.na(native)) %>%
+  ggplot(aes(date, n, fill = competitiveHiring)) + geom_area(position = "fill") + theme_bw() + facet_wrap(~native) + labs(x = "", y = "Count", fill = "Type of\nAppointment") + geom_vline(xintercept = nugIncept, col = "navy") +
+  theme(axis.text.x = element_text(angle = 90, vjust = .5), plot.title = element_text(hjust = .5))
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

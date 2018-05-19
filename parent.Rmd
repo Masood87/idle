@@ -1,0 +1,32 @@
+---
+title: \vspace{3.5in}"District Governor's Report"
+author: "Prepared by: [Sayed Masood Sadat](mailto: sayedmasood.sadat@asiafoundation.org)"
+date: "`r format(Sys.Date(), '%B %e, %Y')`"
+header-includes: #allows you to add in your own Latex packages
+- \usepackage{float} #use the 'float' package
+- \floatplacement{figure}{H} #make every figure with caption = h
+output:
+  pdf_document:
+    fig_caption: yes
+    number_sections: yes
+---
+\thispagestyle{empty}
+\newpage
+\tableofcontents
+\newpage
+
+
+```{r child="p1.Rmd"}
+```
+
+\newpage
+
+```{r child="p2.Rmd"}
+```
+
+
+
+\newpage
+\listoffigures
+\newpage
+\listoftables
