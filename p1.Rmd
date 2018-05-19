@@ -45,6 +45,22 @@ nugHired <- filter(df, startdate > nugIncept & !is.na(firstname))
 shp <- readShapePoly("~/Desktop/ShinyApps/Province mapmaker/AFG_adm1.shp")
 ```
 
+# KEY FINDINGS
+
+
+# INTRODUCTION
+
+## OBJECTIVE
+<!-- key characteristic and profile of districts and district governors, relationship on ... -->
+
+## METHODOLOGY
+### DATA SOURCES
+### ANALYSIS
+
+## LIMITATIONS
+<!-- challenges and shortcmings, and how long it took -->
+
+
 # PART 1
 
 ## DISTRICTS
